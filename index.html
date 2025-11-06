@@ -1,0 +1,48 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spanish AI Tutor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "react/": "https://aistudiocdn.com/react@^19.2.0/",
+          "react": "https://aistudiocdn.com/react@^19.2.0",
+          "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+          "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0"
+        }
+      }
+    </script>
+    <script type="module" src="https://storage.googleapis.com/gweb-codelab-assets/codelab-3d-avatar/v1.2.0/main.min.js"></script>
+    <style>
+      @keyframes blink {
+        0%, 90%, 100% {
+          transform: scaleY(1);
+        }
+        95% {
+          transform: scaleY(0.1);
+        }
+      }
+      .blinking-eyes {
+        transform-origin: center;
+        animation: blink 4s infinite;
+      }
+      
+      google-codelab-3d-avatar {
+        width: 320px;
+        height: 320px;
+        --ambient-color: #f2f2f2;
+        --dir-light-color: #f2f2f2;
+        --dir-light-intensity: 0.8;
+      }
+    </style>
+  </head>
+  <body class="bg-gradient-to-br from-teal-100 via-orange-100 to-amber-100">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

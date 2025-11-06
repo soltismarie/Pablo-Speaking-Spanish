@@ -1,0 +1,7 @@
+{
+  "name": "Pablo Spanish  Tutor",
+  "description": "An interactive AI-powered tutor to help you practice and improve your Spanish through conversation. Get instant feedback and corrections.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
