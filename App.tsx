@@ -28,6 +28,9 @@ const App: React.FC = () => {
   const [isTutorSpeaking, setIsTutorSpeaking] = React.useState<boolean>(false);
   const [tutorExpression, setTutorExpression] = React.useState<TutorExpression>('idle');
   const audioContextRef = React.useRef<AudioContext | null>(null);
+  const nextAudioStartTimeRef = React.useRef(0);
+  const audioPlaybackTimerRef = React.useRef<number | null>(null);
+
 
   const initializeChat = React.useCallback(async () => {
     try {
@@ -101,21 +104,30 @@ const App: React.FC = () => {
     if (audioContextRef.current.state === 'suspended') {
         audioContextRef.current.resume();
     }
+    
+    const now = audioContextRef.current.currentTime;
+    const startTime = Math.max(now, nextAudioStartTimeRef.current);
 
-    setIsTutorSpeaking(true);
-    setTutorExpression('talking');
     const source = audioContextRef.current.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioContextRef.current.destination);
-    source.onended = () => {
+    source.start(startTime);
+    
+    nextAudioStartTimeRef.current = startTime + audioBuffer.duration;
+
+    if (audioPlaybackTimerRef.current) {
+        clearTimeout(audioPlaybackTimerRef.current);
+    }
+
+    const timeUntilEnd = (nextAudioStartTimeRef.current - now) * 1000;
+    audioPlaybackTimerRef.current = window.setTimeout(() => {
         setIsTutorSpeaking(false);
         if (isHappyResult) {
             setTutorExpression('happy');
         } else {
             setTutorExpression('idle');
         }
-    };
-    source.start();
+    }, timeUntilEnd);
   };
 
   const initAudioContext = () => {
@@ -138,54 +150,90 @@ const App: React.FC = () => {
     setTutorExpression('thinking');
     setError(null);
     
+    // Reset audio scheduling for the new message
+    nextAudioStartTimeRef.current = 0;
+    if (audioPlaybackTimerRef.current) {
+        clearTimeout(audioPlaybackTimerRef.current);
+    }
+
     setMessages((prevMessages) => [...prevMessages, { role: Role.MODEL, content: "" }]);
-    let fullResponse = "";
-    let audioPlayed = false;
+    
+    let sentenceBuffer = "";
+    const sentenceEndRegex = /(?<=[.!?])\s+/;
+    let audioHasBeenScheduled = false;
+
+    // Helper to generate and play audio for a piece of text
+    const processAndPlayText = async (text: string) => {
+        if (text.trim() && audioContextRef.current) {
+            if (!audioHasBeenScheduled) {
+                // This is the first piece of audio for this response
+                setIsTutorSpeaking(true);
+                setTutorExpression('talking');
+            }
+            audioHasBeenScheduled = true;
+            
+            const cleanText = text.replace(/\*\*(.*?)\*\*/g, '$1').replace(/¡Ojo a esto!:/g, 'Ojo a esto.').replace(/Un tip de músico:/g, 'Un tip de músico.').replace(/\n/g, ' ');
+            const audioBuffer = await generateSpeech(cleanText, audioContextRef.current);
+            if (audioBuffer) {
+                playAudio(audioBuffer);
+            }
+        }
+    };
 
     try {
-      const responseStream = await chat.sendMessageStream({ message: userMessage });
+        const responseStream = await chat.sendMessageStream({ message: userMessage });
 
-      for await (const chunk of responseStream) {
-        const chunkText = chunk.text;
-        fullResponse += chunkText;
+        for await (const chunk of responseStream) {
+            const chunkText = chunk.text;
+            
+            // Update UI with the streamed text
+            setMessages(prevMessages => {
+                const lastMessage = prevMessages[prevMessages.length - 1];
+                if (lastMessage.role === Role.MODEL) {
+                    const updatedMessages = [...prevMessages];
+                    updatedMessages[prevMessages.length - 1] = { ...lastMessage, content: lastMessage.content + chunkText };
+                    return updatedMessages;
+                }
+                return prevMessages;
+            });
+            
+            sentenceBuffer += chunkText;
+
+            let sentences = sentenceBuffer.split(sentenceEndRegex);
+            if (sentences.length > 1) {
+                const completeSentences = sentences.slice(0, -1);
+                sentenceBuffer = sentences[sentences.length - 1];
+
+                for (const sentence of completeSentences) {
+                    processAndPlayText(sentence); // Fire-and-forget
+                }
+            }
+        }
+
+        // Process any remaining text after the loop
+        await processAndPlayText(sentenceBuffer);
+    
+        // If no audio was ever scheduled (e.g., empty response), reset expression
+        if (!audioHasBeenScheduled) {
+            setTutorExpression('idle');
+        }
+
+    } catch (e) {
+        console.error(e);
+        const errorMessage = "Sorry, I encountered an error. Please try again.";
+        setError(errorMessage);
         setMessages(prevMessages => {
             const lastMessage = prevMessages[prevMessages.length - 1];
             if (lastMessage.role === Role.MODEL) {
                 const updatedMessages = [...prevMessages];
-                updatedMessages[prevMessages.length - 1] = { ...lastMessage, content: lastMessage.content + chunkText };
+                updatedMessages[prevMessages.length - 1] = { ...lastMessage, content: errorMessage };
                 return updatedMessages;
             }
-            return prevMessages;
+            return [...prevMessages, { role: Role.MODEL, content: errorMessage }];
         });
-      }
-
-      if (fullResponse.trim() && audioContextRef.current) {
-        const cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '$1').replace(/¡Ojo a esto!:/g, 'Ojo a esto.').replace(/Un tip de músico:/g, 'Un tip de músico.').replace(/\n/g, ' ');
-        const audioBuffer = await generateSpeech(cleanText, audioContextRef.current);
-        if (audioBuffer) {
-            playAudio(audioBuffer);
-            audioPlayed = true;
-        }
-      }
-
-    } catch (e) {
-      console.error(e);
-      const errorMessage = "Sorry, I encountered an error. Please try again.";
-      setError(errorMessage);
-       setMessages(prevMessages => {
-        const lastMessage = prevMessages[prevMessages.length - 1];
-        if (lastMessage.role === Role.MODEL) {
-            const updatedMessages = [...prevMessages];
-            updatedMessages[prevMessages.length - 1] = { ...lastMessage, content: errorMessage };
-            return updatedMessages;
-        }
-        return [...prevMessages, { role: Role.MODEL, content: errorMessage }];
-      });
+        setTutorExpression('idle');
     } finally {
-      setIsChatLoading(false);
-      if (!audioPlayed) {
-          setTutorExpression('idle');
-      }
+        setIsChatLoading(false);
     }
   };
 
@@ -195,7 +243,13 @@ const App: React.FC = () => {
     setIsPracticeLoading(true);
     setTutorExpression('thinking');
     setError(null);
-    let audioPlayed = false;
+    
+    // Reset audio scheduling
+    nextAudioStartTimeRef.current = 0;
+    if (audioPlaybackTimerRef.current) {
+        clearTimeout(audioPlaybackTimerRef.current);
+    }
+
     try {
         let feedback = await checkExerciseAnswer(currentExercise, userAnswer, level);
         const isCorrect = feedback.startsWith('[CORRECT]');
@@ -206,20 +260,28 @@ const App: React.FC = () => {
 
         if (feedback.trim() && audioContextRef.current) {
             const cleanTextForSpeech = feedback.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*/g, '').replace(/\n/g, ' ');
+            
+            setIsTutorSpeaking(true);
+            setTutorExpression('talking');
+
             const audioBuffer = await generateSpeech(cleanTextForSpeech, audioContextRef.current);
             if (audioBuffer) {
                 playAudio(audioBuffer, isCorrect);
-                audioPlayed = true;
+            } else {
+                 // If audio generation fails, reset state immediately
+                setIsTutorSpeaking(false);
+                setTutorExpression('idle');
             }
+        } else {
+             // No feedback text, so just go to idle
+            setTutorExpression('idle');
         }
     } catch (e) {
         console.error(e);
         setError("Failed to check your answer. Please try again.");
+        setTutorExpression('idle');
     } finally {
         setIsPracticeLoading(false);
-         if (!audioPlayed) {
-            setTutorExpression('idle');
-        }
     }
   };
 
